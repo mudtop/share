@@ -20,7 +20,7 @@ module ModProcessVarName
   end interface
 
   integer, parameter:: nVarMax = 100   ! maximum number of state variables
-  integer, parameter:: nSubstance = 34 ! number of distinct fluids/species
+  integer, parameter:: nSubstance = 35 ! number of distinct fluids/species
 
   ! Number of state variables associated with each substance to be standardized
   integer, parameter:: nVarPerSubstance = 9
@@ -78,7 +78,7 @@ module ModProcessVarName
        'Hp  ',  &
        'HpSw',  &
        'HpPs',  &
-       'PsHp', &
+       'PsHp',  &
        'H2p ',  &
        'O   ',  &
        'Op  ',  &
