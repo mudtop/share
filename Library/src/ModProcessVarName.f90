@@ -40,36 +40,37 @@ module ModProcessVarName
        Hp_   = 2,  &
        HpSw_ = 3,  &
        HpPs_ = 4, &
-       H2p_  = 5,  &
-       O_    = 6,  &
-       Op_   = 7,  &
-       O2p_  = 8,  &
-       He_   = 9,  &
-       Hep_  = 10,  &
-       He2p_ = 11, &
-       OHp_  = 12, &
-       N_    = 13, &
-       Np_   = 14, &
-       COp_  = 15, &
-       CO2p_ = 16, &
-       H2O_  = 17, &
-       H2Op_ = 18, &
-       H3Op_ = 19, &
-       Mp_   = 20, &
-       Lp_   = 21, &
-       MHCp_ = 22, &
-       HHCp_ = 23, &
-       HNIp_ = 24, &
-       Neu1_ = 25, &
-       Neu2_ = 26, &
-       Neu3_ = 27, &
-       Neu4_ = 28, &
-       Pui1_ = 29, &
-       Pui2_ = 30, &
-       Pui3_ = 31, &
-       Pui4_ = 32, &
-       El_   = 33, &
-       Main_ = 34 ! main component, MHD/HD
+       PsHp_ = 5, &
+       H2p_  = 6,  &
+       O_    = 7,  &
+       Op_   = 8,  &
+       O2p_  = 9,  &
+       He_   = 10,  &
+       Hep_  = 11,  &
+       He2p_ = 12, &
+       OHp_  = 13, &
+       N_    = 14, &
+       Np_   = 15, &
+       COp_  = 16, &
+       CO2p_ = 17, &
+       H2O_  = 18, &
+       H2Op_ = 19, &
+       H3Op_ = 20, &
+       Mp_   = 21, &
+       Lp_   = 22, &
+       MHCp_ = 23, &
+       HHCp_ = 24, &
+       HNIp_ = 25, &
+       Neu1_ = 26, &
+       Neu2_ = 27, &
+       Neu3_ = 28, &
+       Neu4_ = 29, &
+       Pui1_ = 30, &
+       Pui2_ = 31, &
+       Pui3_ = 32, &
+       Pui4_ = 33, &
+       El_   = 34, &
+       Main_ = 35 ! main component, MHD/HD
 
   ! String array storing the standard names of all substances
   character(len=6):: NameSubstance_I(nSubstance) = [ &
@@ -77,6 +78,7 @@ module ModProcessVarName
        'Hp  ',  &
        'HpSw',  &
        'HpPs',  &
+       'PsHp', &
        'H2p ',  &
        'O   ',  &
        'Op  ',  &
@@ -514,6 +516,15 @@ contains
 
     Dictionary_III(HpSw_, Rho_,   3) = 'rhosw'
     Dictionary_III(HpSw_, Energy_,3) = 'swe'
+
+
+    !recirculated plasmasphere
+    Dictionary_III(PsHp_, Rho_,    2) = 'pshprho'
+    Dictionary_III(PsHp_, RhoUx_,  2) = 'pshpmx'
+    Dictionary_III(PsHp_, RhoUy_,  2) = 'pshpmy'
+    Dictionary_III(PsHp_, RhoUz_,  2) = 'pshpmz'
+    Dictionary_III(PsHp_, p_,      2) = 'pshpp'
+    Dictionary_III(PsHp_, Energy_, 2) = 'pshpe'
 
     ! ionosphere
     Dictionary_III(Hp_, Rho_,   2) = 'rhoion'
