@@ -4,35 +4,36 @@
 
 SHELL=/bin/sh
 
-# Fortran language related part of Makefile.conf: Makefile.Darwin.nagfor
-FORTRAN_COMPILER_NAME=nagfor
+# Fortran language related part of Makefile.conf: Makefile.Linux.mpiifort
+FORTRAN_COMPILER_NAME=ifx
 #
 #	Space Weather Modeling Framework (SWMF) 
-#	NAG Fortran Compiler (5.3 or later)
+#	Intel Fortran compiler with mpiifort
 #
 
-COMPILE.f77     = ${CUSTOMPATH_F}nagfor
-COMPILE.f90     = ${CUSTOMPATH_F}nagfor
-LINK.f90	= ${CUSTOMPATH_MPI}mpif90
+COMPILE.f77     = ${CUSTOMPATH_F}ifx
+COMPILE.f90     = ${CUSTOMPATH_F}ifx
+LINK.f90	= ${CUSTOMPATH_F}mpiifx
+
+# To compile main C code with Fortran libraries
+NOMAINFLAG = -nofor-main
+
 AR = ar -rs
 
 SINGLEPREC =
-DOUBLEPREC = -default_kinds:r=64
+DOUBLEPREC = -r8
 PRECISION  = ${DOUBLEPREC}
 
-MPILIB = 
+MPILIB =
 #MPILIB = -L${LIBDIR} -lNOMPI
 
-# Compile the ACC code (for debugging it on the CPU)
-#ACCFLAG = -D_OPENACC -DNOACCMODULE
-
-#OPENMPFLAG = -fopenmp
+#OPENMPFLAG = -qopenmp
 
 # Define where modules are stored and add it to the search path
 # INCL_EXTRA can be defined to add more search directories.
-SEARCH =  -mdir ${INCLDIR} -I${INCLDIR} ${INCL_EXTRA}
+SEARCH = -module ${INCLDIR} ${INCL_EXTRA}
 
-DEBUGFLAG = -C -gline -nan -w=opt -ieee=stop
+DEBUGFLAG = -traceback -g -check bounds,pointers  
 DEBUG     = 
 
 OPT0 = -O0
@@ -41,8 +42,7 @@ OPT2 = -O2
 OPT3 = -O3
 OPT4 = -O4
 
-# -std=gnu89 is needed to compile nag 7.1 code with gcc15
-CFLAG = ${SEARCH} -c -w -ideclient -Wc=`which gcc` -Wc,-std=gnu89 -fpp -kind=byte ${OPENMPFLAG} ${ACCFLAG} -DTESTACC ${DEBUG}
+CFLAG = ${SEARCH} -c -w -fpp -diag-disable remark ${OPENMPFLAG} ${DEBUG}
 
 Cflag0  = ${CFLAG} ${PRECISION} ${OPT0}
 Cflag1  = ${CFLAG} ${PRECISION} ${OPT1}
@@ -52,18 +52,16 @@ Cflag4  = ${CFLAG} ${PRECISION} ${OPT4}
 
 # RCM compilation flags
 # To allow RCM to compile as double precision, add PRECISION flag
-CFLAGS = ${CFLAG} -save
+CFLAGS = ${CFLAG} ${OPT2} -save
 
-# Link flags: LflagMpi for MPI parallel code, Lflag for serial code
-# The '-Bstatic' flag avoids segmentation fault for large number of blocks (?)
-Lflag    = ${PRECISION} ${OPENMPFLAG} ${CPPLIB} ${DEBUG} -Wl,-w -Wl=`which gcc` ${OMPLIBC}
+# Link with or without the MPI library
+Lflag    = ${PRECISION} ${OPENMPFLAG} ${CPPLIB} ${DEBUG} 
 LflagMpi = ${Lflag} ${MPILIB}
 
 
 # BLAS and LAPACK libraries
 LBLAS =
 BLAS  = 
-
 
 #
 #       General rules
@@ -79,7 +77,7 @@ BLAS  =
 	${COMPILE.f90} ${Cflag2} $<
 
 .f.o:
-	${COMPILE.f77} ${Cflag2} -132 -dusty $<
+	${COMPILE.f77} ${Cflag2} -132 $<
 
 .for.o:
 	${COMPILE.f77} ${Cflag2} -132 $<
@@ -88,4 +86,6 @@ BLAS  =
 	${COMPILE.f77} ${Cflag2} -132 $<
 
 cleanfiles:	
-	rm -f *~ core *.o *.mod fort.* a.out *.exe *.a *.so *.protex
+	rm -f *~ core *.o *.mod fort.* a.out *.exe *.a *.so *.il *.protex
+
+

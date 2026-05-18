@@ -46,6 +46,9 @@ module ModUtilities
   public:: test_mod_utility
   public:: norm2
   public:: find_cell
+  public:: int_to_ascii_code
+  public:: real_to_ascii_code
+  public:: scientific_notation
   interface find_cell
      ! Single and double precision coordinates
      module procedure find_cell4, find_cell8
@@ -66,13 +69,20 @@ module ModUtilities
 
   character, public:: cTab = char(9)
 
+  integer(Int1_), public, parameter:: iChar0 = ichar('0')
+  integer(Int1_), public, parameter:: iCharE = ichar('E')
+  integer(Int1_), public, parameter:: iCharMinus = ichar('-')
+  integer(Int1_), public, parameter:: iCharPlus = ichar('+')
+  integer(Int1_), public, parameter:: iCharDot = ichar('.')
+  integer(Int1_), public, parameter:: iCharSpace = ichar(' ')
+
   interface split_string
      module procedure split_string, split_string_simple
-  end interface
+  end interface split_string
 
   interface join_string
      module procedure join_string, join_string_simple
-  end interface
+  end interface join_string
 
 contains
   !============================================================================
@@ -261,8 +271,8 @@ contains
        if(DoAdvance)then
           write(*,'(a)') Value
        else
-           write(*,'(a)',ADVANCE="NO") Value
-        end if
+          write(*,'(a)',ADVANCE="NO") Value
+       end if
     end select
 
   end subroutine write_value
@@ -423,19 +433,21 @@ contains
 
   end subroutine fix_dir_name
   !============================================================================
-  subroutine open_file(iUnitIn, File, Form, Status, Position, Access, Recl, &
-       iComm, NameCaller, iErrorOut, iUnitMpi)
+  subroutine open_file(iUnitIn, File, Form, Status, Position, Access, Action, &
+       Recl, iComm, NameCaller, iErrorOut, iUnitMpi)
 
     ! Interface for the Fortran open statement with error checking.
     ! If an error occurs, the code stops and writes out the unit number,
     ! the error code and the name of the file.
     ! If NameCaller is present, it is also shown.
     ! If no unit number is passed, open UnitTmp_.
-    ! Default format is 'formatted' as in the open statement.
-    ! Default status is 'replace' (not unknown) as it is well defined.
-    ! Default position is 'rewind' (not asis) as it is well defined.
-    ! Default access is 'sequential' as in the open statement.
-    ! There is no default record length Recl.
+    ! Default FORM is 'formatted' as in the open statement.
+    ! Default STATUS is 'replace' (not unknown) as it is well defined.
+    ! Default POSITION is 'rewind' (not asis) as it is well defined.
+    ! Default ACCESS is 'sequential' as in the open statement.
+    ! Default ACTION is 'read' if status is 'old' and position is not 'append'
+    ! otherwise the default is 'readwrite'.
+    ! There is no default for record length RECL.
     ! If the MPI communicator iComm is present together with Recl,
     ! the file will be opened with status='replace' on processor 0,
     ! and with status='old' on other processors with an MPI_barrier
@@ -447,13 +459,15 @@ contains
     character(len=*), optional, intent(in):: Status
     character(len=*), optional, intent(in):: Position
     character(len=*), optional, intent(in):: Access
+    character(len=*), optional, intent(in):: Action
     integer,          optional, intent(in):: Recl
     integer,          optional, intent(in):: iComm
     character(len=*), optional, intent(in):: NameCaller
     integer,          optional, intent(out):: iErrorOut
     integer,          optional, intent(inout):: iUnitMpi
 
-    character(len=20):: TypeForm, TypeStatus, TypePosition, TypeAccess
+    character(len=20):: &
+         TypeForm, TypeStatus, TypePosition, TypeAccess, TypeAction
 
     integer:: iUnit
     integer:: iError, iProc, nProc
@@ -464,18 +478,37 @@ contains
     if(present(iUnitIn)) iUnit = iUnitIn
 
     TypeForm = 'formatted'
-    if(present(Form)) TypeForm = Form
+    if(present(Form))then
+       TypeForm = Form
+       call lower_case(TypeForm)
+    end if
 
     TypeStatus = 'replace'
-    if(present(Status)) TypeStatus = Status
+    if(present(Status))then
+       TypeStatus = Status
+       call lower_case(TypeStatus)
+    end if
 
     TypePosition = 'rewind'
-    if(present(Position)) TypePosition = Position
+    if(present(Position))then
+       TypePosition = Position
+       call lower_case(TypePosition)
+    end if
+
+    TypeAction = 'readwrite'
+    if(TypeStatus == 'old' .and. TypePosition /= 'append') TypeAction = 'read'
+    if(present(Action))then
+       TypeAction = Action
+       call lower_case(TypeAction)
+    end if
 
     TypeAccess = 'sequential'
-    if(present(Access)) TypeAccess = Access
+    if(present(Access))then
+       TypeAccess = Access
+       call lower_case(TypeAccess)
+    end if
 
-    if(present(iErrorOut))iErrorOut = 0
+    if(present(iErrorOut)) iErrorOut = 0
 
     if(present(Recl))then
        if(present(iComm))then
@@ -485,7 +518,7 @@ contains
           ! Open file with status "replace" on processor 0
           if(iProc == 0) &
                open(iUnit, FILE=File, FORM=TypeForm, STATUS='replace', &
-               ACCESS=TypeAccess, RECL=Recl, IOSTAT=iError)
+               ACCESS=TypeAccess, ACTION=TypeAction, RECL=Recl, IOSTAT=iError)
           if(nProc > 1)then
              ! Check if open worked on processor 0
              if(iProc == 0 .and. iError /= 0)then
@@ -499,22 +532,25 @@ contains
              ! Other processors open with status "old"
              if(iProc > 0) &
                   open(iUnit, FILE=File, FORM=TypeForm, STATUS='old', &
-                  ACCESS=TypeAccess, RECL=Recl, IOSTAT=iError)
+                  ACCESS=TypeAccess, ACTION=TypeAction, RECL=Recl, &
+                  IOSTAT=iError)
           end if
        else
           open(iUnit, FILE=File, FORM=TypeForm, STATUS=TypeStatus, &
-               ACCESS=TypeAccess, RECL=Recl, IOSTAT=iError)
+               ACCESS=TypeAccess, ACTION=TypeAction, RECL=Recl, IOSTAT=iError)
        end if
     else if(present(iUnitMpi)) then
-      if(.not.present(iComm))then
-         call CON_stop(NameSub//' MPI IO requires iComm to be present')
-      end if
+       if(.not.present(iComm))then
+          if(present(NameCaller)) write(*,*) 'NameCaller=', NameCaller
+          call CON_stop(NameSub//' MPI IO requires iComm to be present')
+       end if
        ! Open file with MPI I/O
-      call MPI_file_open(iComm, File, MPI_MODE_WRONLY+MPI_MODE_CREATE, &
+       call MPI_file_open(iComm, File, MPI_MODE_WRONLY+MPI_MODE_CREATE, &
             MPI_INFO_NULL, iUnitMpi, iError)
     else
        open(iUnit, FILE=File, FORM=TypeForm, STATUS=TypeStatus, &
-            POSITION=TypePosition, ACCESS=TypeAccess, IOSTAT=iError)
+            POSITION=TypePosition, ACCESS=TypeAccess, ACTION=TypeAction, &
+            IOSTAT=iError)
     end if
 
     if(iError /= 0)then
@@ -812,7 +848,7 @@ contains
     String = String_I(1)
 
     do i = 2, nString
-      String = trim(String) // StringSep(1:l) // String_I(i)
+       String = trim(String) // StringSep(1:l) // String_I(i)
     end do
 
   end subroutine join_string
@@ -968,7 +1004,7 @@ contains
     ! Create an error message by passing incorrect filename
     ! Since the error code varies by compiler, this is commented out
     ! call open_file(FILE='xxx/testfile.bad', STATUS='old', &
-    !     NameCaller=NameSub)
+    !     iErrorOut=iError, NameCaller=NameSub)
 
     ! Use all arguments
     call open_file(UnitTmp_, FILE='xxx/testfile.dat', FORM='formatted', &
@@ -1348,6 +1384,9 @@ contains
        IsUniform = .true.
     endif
 
+    ! Assume that Coord is inside the range. Set false later if not.
+    if(present(IsInside)) IsInside = .true.
+
     if(IsUniform)then
        ! Uniform grid case with normalized coordinate
 
@@ -1379,16 +1418,12 @@ contains
              dCoord = 1.0
           endif
           if(present(IsInside)) IsInside = .false.
-       else
-          if(present(IsInside)) IsInside = .true.
        end if
 
     elseif(Coord_I(MinCoord) < Coord_I(MaxCoord))then
 
        ! Monotone increasing coordinates
        Tolerance = (Coord_I(MaxCoord) - Coord_I(MinCoord))*1d-12
-
-       if(present(IsInside)) IsInside = .true.
 
        if(Coord < Coord_I(MinCoord) - Tolerance)then
           if(.not. (present(DoExtrapolate))) then
@@ -1493,6 +1528,11 @@ contains
           end if
           if(present(IsInside)) IsInside = .false.
           RETURN
+       elseif(Coord <= Coord_I(MaxCoord))then
+          ! Very near the edge
+          iCoord = MaxCoord - 1
+          dCoord = 1.0
+          RETURN
        end if
 
        if(Coord > Coord_I(MinCoord) + Tolerance)then
@@ -1512,9 +1552,12 @@ contains
           end if
           if(present(IsInside)) IsInside = .false.
           RETURN
+       elseif(Coord >= Coord_I(MinCoord))then
+          ! Very near the edge
+          iCoord = MinCoord
+          dCoord = 0.0
+          RETURN
        end if
-
-       if(present(IsInside)) IsInside = .true.
 
        ! binary search
        i  = (MinCoord + MaxCoord)/2
@@ -1658,7 +1701,131 @@ contains
   !============================================================================
 #endif
 #endif
+  subroutine int_to_ascii_code(n, nLen, iAscii_I, DoOmitSign, DoFillZero)
+    !$acc routine seq
+    ! Example: num = -12345 with nLen = 9.
+    ! Output Ascii_I = '-00012345'
+    integer, intent(in) :: n, nLen
+    integer(Int1_), intent(out) :: iAscii_I(1:nLen)
+    logical, optional, intent(in) :: DoOmitSign
+    logical, optional, intent(in) :: DoFillZero
+    integer :: i, n0
+    !--------------------------------------------------------------------------
+    if(present(DoFillZero)) then
+          iAscii_I = iChar0
+    else
+       iAscii_I = iCharSpace
+    end if
 
+    n0 = abs(n)
+    if (n < 0) then
+       iAscii_I(1) = iCharMinus
+    else
+      if(.not. present(DoOmitSign)) then
+         iAscii_I(1) = iCharPlus
+      end if
+    end if
+    do i = nLen, 2, -1
+      if(n0==0) EXIT
+       iAscii_I(i) = mod(n0, 10) + iChar0
+       n0 = n0 / 10
+    end do
+    if (n0 /= 0) then
+       write(*,*) "Error: Number too large to fit in array"
+    end if
+  end subroutine int_to_ascii_code
+  !============================================================================
+  subroutine real_coef_to_ascii_code(Val, nFrac, iAscii_I)
+    !$acc routine seq
+
+    ! |r| < 1 is assumed!
+
+    ! Example: r = -1.23456789 with nFrac = 6.
+    ! Output Ascii_I = '-1.234568  ' (Note: the last digit is rounded)
+    real, intent(in) :: Val
+    integer, intent(in) :: nFrac
+    integer(Int1_), intent(out) :: iAscii_I(1:nFrac+3)
+
+    integer :: i, m
+    logical :: IsNegative
+    real:: V0
+    !--------------------------------------------------------------------------
+    iAscii_I = iCharSpace  ! Initialize all to ' '
+    V0 = abs(Val)
+
+    IsNegative = (Val < 0.0)
+
+    V0 = V0 + 0.5*10.0**(-nFrac)  ! rounding
+
+    ! Avoid
+    if(V0 >= 10.0) V0 = V0 - 0.5*10.0**(-nFrac)
+
+    if(IsNegative) iAscii_I(1) = iCharMinus
+
+    m = floor(V0)
+    iAscii_I(2) = m + iChar0
+    iAscii_I(3) = iCharDot
+    do i = 4, nFrac+3
+       V0 = (V0 - m)*10.0
+       m = floor(V0)
+       iAscii_I(i) = m + iChar0
+    end do
+  end subroutine real_coef_to_ascii_code
+  !============================================================================
+  subroutine scientific_notation(Val, Coefficient, nExp)
+    !$acc routine seq
+
+    ! Convert a real number Val to scientific notation:
+    ! Val = Coefficient * 10**Exponent,
+    ! where 1.0 <= abs(Coefficient) < 10.0 unless Val is 0.0
+
+    real, intent(in) :: Val
+    real, intent(out) :: Coefficient
+    integer, intent(out) :: nExp
+    real, parameter :: Fractor = log(2.0)/log(10.0)
+
+    logical :: IsNegative
+
+    !--------------------------------------------------------------------------
+    IsNegative = (Val < 0.0)
+
+    Coefficient = abs(Val)
+
+    nExp = floor(exponent(Coefficient)*Fractor)
+
+    Coefficient = Coefficient * (0.1**nExp)
+
+    if(Coefficient < 1.0 .and. Coefficient > 0.0) then
+       Coefficient = Coefficient * 10.0
+       nExp = nExp - 1
+    end if
+
+    if(IsNegative) Coefficient = -Coefficient
+  end subroutine scientific_notation
+  !============================================================================
+  subroutine real_to_ascii_code(Val, nFrac, nLen, iAscii_I)
+    !$acc routine seq
+    ! Example: Val =    -1.234567E+03, where nFrac=6
+    real, intent(in) :: Val
+    integer, intent(in) :: nFrac, nLen
+    integer(Int1_), intent(out) :: iAscii_I(nLen)
+
+    integer :: i, nExp
+    real :: Coefficient
+    !--------------------------------------------------------------------------
+    call scientific_notation(Val, Coefficient, nExp)
+
+    iAscii_I = iCharSpace
+
+    ! Position to start writing coefficient
+    i = nLen - (nFrac + 7) + 1
+    call real_coef_to_ascii_code(Coefficient, nFrac, iAscii_I(i:i+nFrac+3))
+
+    iAscii_I(nLen-3) = iCharE
+    iAscii_I(nLen-2:nLen) = iChar0
+    call int_to_ascii_code(nExp, 3, iAscii_I(nLen-2:nLen), DoFillZero=.true.)
+  end subroutine real_to_ascii_code
+  !============================================================================
 end module ModUtilities
 !==============================================================================
 subroutine CON_set_do_test_ext(String,DoTest,DoTestMe)

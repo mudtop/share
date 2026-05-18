@@ -128,9 +128,9 @@ module ModReadParam
   !     ...
 
   use ModMpi
-  use ModIoUnit,      ONLY: io_unit_new, StdIn_, StdOut_
-  use ModUtilities,   ONLY: CON_stop
-  use ModKind,        ONLY: Real4_, Real8_
+  use ModIoUnit, ONLY: io_unit_new, StdIn_, StdOut_
+  use ModUtilities, ONLY: CON_stop
+  use ModKind, ONLY: Real4_, Real8_
   use ModTimeConvert, ONLY: time_int_to_real
 
   implicit none
@@ -259,7 +259,8 @@ contains
           if(.not.IsFound)call CON_stop(NameSub//' SWMF_ERROR: '//&
                trim(NameFile)//" cannot be found")
           iUnit_I(iFile)=io_unit_new()
-          call open_file(iUnit_I(iFile), FILE=NameFile, STATUS="old")
+          call open_file(iUnit_I(iFile), FILE=NameFile, STATUS="old", &
+               NameCaller=NameSub)
        endif
        do
           read(iUnit_I(iFile),'(a)', ERR=100, END=100) StringLine
@@ -308,7 +309,8 @@ contains
                   " SWMF_ERROR: include file cannot be found, name="//&
                   trim(StringLine))
              iUnit_I(iFile) = io_unit_new()
-             call open_file(iUnit_I(iFile), FILE=StringLine, STATUS="old")
+             call open_file(iUnit_I(iFile), FILE=StringLine, STATUS="old", &
+                  NameCaller=NameSub//':include')
              CYCLE
           else if(NameCommand/='#END')then
              ! Store line into buffer
@@ -320,7 +322,7 @@ contains
           end if
 
 100       continue
-          call close_file(iUnit_I(iFile))
+          call close_file(iUnit_I(iFile), NameCaller=NameSub)
           if(iFile > 1)then
              ! Continue reading the calling file
              iFile = iFile - 1
@@ -605,6 +607,7 @@ contains
   end subroutine read_var_c
   !============================================================================
   subroutine read_integer(IntVar, iError)
+
     integer,           intent(out):: IntVar
     integer, optional, intent(out):: iError
     !--------------------------------------------------------------------------
@@ -640,9 +643,10 @@ contains
 
   end subroutine read_var_i
   !============================================================================
-  subroutine read_real4(Real4Var,iError,StartTimeIn)
+  subroutine read_real4(Real4Var, iError, StartTimeIn)
+
     ! Read a single precision real variable
-    ! Arguments
+
     real(Real4_),           intent(out):: Real4Var
     integer, optional,      intent(out):: iError
     real(Real8_), optional, intent(in) :: StartTimeIn
@@ -651,9 +655,10 @@ contains
 
   end subroutine read_real4
   !============================================================================
-  subroutine read_real8(RealVar,iError,StartTimeIn)
+  subroutine read_real8(RealVar, iError, StartTimeIn)
+
     ! Read a double precision real variable
-    ! Arguments
+
     real(Real8_),           intent(out):: RealVar
     integer, optional,      intent(out):: iError
     real(Real8_), optional, intent(in) :: StartTimeIn
@@ -666,7 +671,6 @@ contains
 
     ! Read a single precision real variable described by Name
 
-    ! Arguments
     character (len=*),      intent(in) :: Name
     real(Real4_),           intent(out):: Real4Var
     real(Real8_), optional, intent(in) :: StartTimeIn
@@ -683,7 +687,6 @@ contains
 
     ! Read a double precision real variable described by Name
 
-    ! Arguments
     character (len=*),      intent(in) :: Name
     real(Real8_),           intent(out):: RealVar
     real(Real8_), optional, intent(in) :: StartTimeIn
@@ -780,8 +783,9 @@ contains
   end subroutine read_var_r8
   !============================================================================
   subroutine read_logical(IsLogicVar, iError)
+
     ! Read a logical variable
-    ! Arguments
+
     logical, intent(out)          :: IsLogicVar
     integer, optional, intent(out):: iError
     !--------------------------------------------------------------------------
@@ -793,7 +797,6 @@ contains
 
     ! Read a logical variable described by Name
 
-    ! Arguments
     character (len=*), intent(in) :: Name
     logical, intent(out)          :: IsLogicVar
     integer, optional, intent(out):: iError

@@ -14,9 +14,10 @@
 ;
 ; fixing things if animate or slice crashes
 ;   reset_axis, slice_data_restore
-; reading ascii and binary data produced by VAC, BATSRUS, PWOM, FLEKS etc:
+; reading ascii and binary data produced by VAC, BATSRUS, PWOM, FLEKS, RIM etc:
 ;    open_file, get_file_types, get_file_head, get_pict, 
-;    get_pict_asc, get_pict_bin, get_pict_log, get_log, read_log_line
+;    get_pict_asc, get_pict_bin, get_pict_log, get_pict_rim,
+;    get_log, read_log_line
 ; showing / overwriting information read from last file:
 ;    show_head, show_units, set_units
 ; saving ascii and binary data in the same format as used for input:
@@ -94,13 +95,13 @@ pro set_default_values
   ;; Parameters for read_data
   common getpict_param, $
      filename, nfile, filenames, filetypes, npictinfiles, npict, filetype
-  filename=''          ; space separated list of filenames. May contain *, []
-  nfile=0              ; number of files
-  filenames=0          ; array of filenames
-  filetypes=''         ; file types (real4, real8, ascii, log ...)
-  npictinfiles=0       ; number of pictures in each file
-  npict=0              ; index of snapshot to be read
-  filetype=''          ; type of current file
+  filename = ''        ; space separated list of filenames. May contain *, []
+  nfile = 0            ; number of files
+  filenames = 0        ; array of filenames
+  filetypes = ''       ; file types (real4, real8, ascii, log ...)
+  npictinfiles = 0     ; number of pictures in each file
+  npict = 0            ; index of snapshot to be read
+  filetype = ''        ; type of current file
 
   ;; Parameters for plot_data
   common plotfunc_param, $
@@ -183,7 +184,7 @@ pro set_default_values
 
   usereg=0         ; use wreg and xreg instead of w and x
   dotransform='n'  ; do transform with plot_data?
-  transform='n'    ; values: none,regular,my,polar,unpolar,sphere
+  transform='n'    ; values: none,regular,my,polar,unpolar,sphere,angle
   nxreg=[0,0]      ; size of transformed grid
   xreglimits=0     ; transformed grid limits [xmin, ymin, xmax, ymax]
   wregpad=0        ; array of values used in "padding" the regular arrays
@@ -266,7 +267,7 @@ pro set_default_values
   common plot_param, $
      multiplot, multix, multiy, multidir, plotix, plotiy, $
      plot_spacex, plot_spacey, showxaxis, showyaxis, showxtitle, showytitle, $
-     fixaspect, noerase, $ 
+     fixaspect, blackbackground, noerase, $
      cut, cut0, plotdim, rcut, rbody, $
      velvector, velpos, velpos0, velrandom, velspeed, velx, vely, veltri, $
      viewanglex, viewanglez, colorlevel, contourlevel, $
@@ -290,6 +291,7 @@ pro set_default_values
   showxaxis = 0       ; show x axis in all subplots
   showyaxis = 0       ; show y axis in all subplots
   fixaspect = 1       ; fix aspect ratio according to coordinates
+  blackbackground = 0 ; force black background
   noerase = 0         ; Do not erase before new plot
   cut = 0             ; index array for the cut
   cut0 = 0            ; cut array without degenerate indices
@@ -1128,7 +1130,10 @@ pro animate_data
      videostream = videoobject.AddVideoStream(!d.x_size,!d.y_size,videorate)
   endif else begin
      if savemovie ne 'n' then spawn,'/bin/mkdir -p '+moviedir
-     if savemovie eq 'ps' then set_plot,'PS',/INTERPOLATE
+     if savemovie eq 'ps' then begin
+        set_plot,'PS',/INTERPOLATE
+        if blackbackground then black_background
+     endif
   endelse
 
   doanimate= npict gt npict1 and !d.name eq 'X' and showmovie eq 'y'
@@ -1147,10 +1152,12 @@ pro animate_data
      if ipict1 eq 0 then begin
         if not keyword_set(noerase) then erase
         !p.multi=[0,multix,multiy,0,multidir]
-        if savemovie eq 'ps' then $
+        if savemovie eq 'ps' then begin
            device, $
-           filename=moviedir+'/'+string(FORMAT='(i4.4)',iplot+1)+'.ps', $
-           XSIZE=24, YSIZE=18, /LANDSCAPE, /COLOR, BITS=8
+              filename=moviedir+'/'+string(FORMAT='(i4.4)',iplot+1)+'.ps', $
+              XSIZE=24, YSIZE=18, /LANDSCAPE, /COLOR, BITS=8
+           if blackbackground then black_background
+        endif
      endif
 
      if ipict eq 0 then print, FORMAT='("ipict:    ",$)'
@@ -1661,6 +1668,8 @@ pro plot_log_data
 end
 ;==============================================================================
 pro show_log_data
+  common debug_param & on_error, onerror
+  ;; read log data and plot it
   read_log_data
   plot_log_data
 end
@@ -1767,7 +1776,7 @@ function log_time, wlog, wlognames
 
   if idate gt -1 then begin
      hours = wlog(*,idate)*24.0  ; number of hours since Jan 1 4713 BC.
-  endif else if itime gt -1 then begin
+  endif else if itime gt -1 and iyear lt 0 and ihour lt 0 then begin
      hours = wlog(*,itime)/3600.0 ; convert seconds to hours
   endif else begin
      if iyear gt -1 and idoy gt -1 then $ ; Year and Day-of-year
@@ -1781,7 +1790,7 @@ function log_time, wlog, wlognames
         hours = 24*(julday(wlog(*,imon), wlog(*,iday), wlog(*,iyear)) - $
                     julday(start_month, start_day, start_year))
 
-     ;; Add time columns   
+     ;; Add time columns
      if ihour gt -1 then hours += wlog(*,ihour)
      if imin  eq ihour + 1 then hours += wlog(*,imin)/60.0
      if isec  eq imin  + 1 then hours += wlog(*,isec)/3600.0
@@ -1849,46 +1858,54 @@ function log_func, wlog, varnames, varname, error
 
   error = 0
   ivar  = min(where(strlowcase(varnames) eq strlowcase(varname)))
-                                ; Variable is found, return with array
 
-  ;; dst and dst_sm are considered equivalent
-  if ivar lt 0 and strlowcase(varname) eq 'dst_sm' then $
-     ivar  = min(where(strlowcase(varnames) eq 'dst'))
-
-  if ivar lt 0 and strlowcase(varname) eq 'dst' then $
-     ivar  = min(where(strlowcase(varnames) eq 'dst_sm'))
+  ;; dst* and smr are considered equivalent
+  if ivar lt 0 and strmid(strlowcase(varname),0,3) eq 'dst' then $
+     ivar  = min(where(strlowcase(varnames) eq 'dst' or $
+                       strlowcase(varnames) eq 'dst_sm' or $
+                       strlowcase(varnames) eq 'smr'))
   
+  ;; Variable is found, return with array
   if ivar ge 0 then return, wlog(*,ivar)
 
-                                ; Try calculating temperature or pressure
+  ;; Calculate dbH
+  if ivar lt 0 and strlowcase(varname) eq 'dbh' then begin
+     ivar = min(where( strlowcase(varnames) eq 'b_northgeomag'))
+     jvar = min(where( strlowcase(varnames) eq 'b_eastgeomag'))
+     if ivar ge 0 and jvar ge 0 then $
+        return, sqrt(wlog[*,ivar]^2 + wlog[*,jvar]^2)
+  endif
+     
+  ;; Try calculating temperature or pressure
   if varname eq 'T' then begin
-                                ; Convert p[nPa]/n[/cc] to T[eV]
+     ;; Convert p[nPa]/n[/cc] to T[K]: 1e-9/(1e6*1.38e-23) = 72.4e6
      ivar = min(where( varnames eq 'p'))
      jvar = min(where( varnames eq 'rho'))
      if ivar ge 0 and jvar ge 0 then $
-        return,6241.5*wlog(*,ivar)/wlog(*,jvar)
+        return, 72.4e6*wlog(*,ivar)/wlog(*,jvar)
 
   endif else if varname eq 'p' then begin
-                                ; Convert T[eV]*n[/cc] to p[nPa] to T[eV]
+     ;; Convert T[K]*n[/cc] to p[nPa]
      ivar = min(where( varnames eq 'T'))
      jvar = min(where( varnames eq 'rho'))
      if ivar ge 0 and jvar ge 0 then $
-        return, wlog(*,ivar)*wlog(*,jvar)/6241.5
+        return, wlog(*,ivar)*wlog(*,jvar)/72.4e6
   endif
 
   error = 1
-  return,0*wlog(*,0)
+  return, 0*wlog(*,0)
   
 end
 ;==============================================================================
 pro black_background
 
   common debug_param & on_error, onerror
+  common plot_param
 
   !p.background =   0
   !p.color      = 255
   POLYFILL, [1,1,0,0,1], [1,0,0,1,1], /NORMAL, COLOR=0 ; draw black box
-
+  noerase = 1
 end
 ;==============================================================================
 pro white_background
@@ -1915,6 +1932,7 @@ pro open_file, unit, filename, filetype
    close,unit
    case filetype of
        'log'   :openr,unit,filename
+       'rim'   :openr,unit,filename
        'ascii' :openr,unit,filename
        'real4' :openr,unit,filename,/f77_unf
        'real8' :openr,unit,filename,/f77_unf
@@ -1932,6 +1950,7 @@ pro get_file_types
 
   filetypes    = strarr(nfile)
   npictinfiles = intarr(nfile)
+  pictsize = long64(1)
   for ifile=0, nfile-1 do begin
      l = strlen(filenames(ifile)) - 4
      if    strpos(filenames(ifile),'.log') eq l $
@@ -1940,38 +1959,47 @@ pro get_file_types
         or strpos(filenames(ifile),'.csv') eq l then begin
         filetypes(ifile)    = 'log'
         npictinfiles(ifile) = 1000
+     endif else if strpos(filenames(ifile),'.idl') ge l-1 then begin
+        filetypes(ifile) = 'rim'
+        close, 1
+        openr, 1, filenames(ifile)
+        status = fstat(1)
+        fsize = status.size
+        get_file_head, 1, filenames(ifile), filetypes(ifile), pictsize=pictsize
+        close, 1
+        npictinfiles(ifile) = fsize/pictsize
      endif else begin
         ;; Obtain filetype based on the length info in the first 4 bytes
-        close,10
-        openr,10,filenames(ifile)
-        lenhead=1L
-        readu,10,lenhead
+        close, 10
+        openr, 10, filenames(ifile)
+        lenhead = 1L
+        readu, 10, lenhead
         if lenhead ne 79 and lenhead ne 500 then ftype='ascii' else begin
            ;; The length of the 2nd line decides between real4 and real8
            ;; since it contains the time, which is real*4 or real*8
-           head=bytarr(lenhead+4)
-           len=1L
-           readu,10,head,len
+           head = bytarr(lenhead+4)
+           len = 1L
+           readu, 10, head,len
            case len of
               20: ftype='real4'
               24: ftype='real8'
               else: begin
-                 print,'Error in get_file_types: strange unformatted file:',$
-                       filenames(ifile)
+                 print, $
+                    'Error in get_file_types: strange unformatted file:',$
+                    filenames(ifile)
                  retall
               end
            endcase
            if lenhead eq 500 then ftype = strupcase(ftype)
         endelse
         close,10
-        
-        ;; Obtain file size and number of snapshots
-        open_file,1,filenames(ifile),ftype
-        status=fstat(1)
-        fsize=status.size
 
-        pointer=long64(0)
-        pictsize=long64(1)
+        ;; Obtain file size and number of snapshots
+        open_file, 1, filenames(ifile), ftype
+        status = fstat(1)
+        fsize = status.size
+
+        pointer = long64(0)
         ipict=0
         while pointer lt fsize do begin
            ;; Obtain size of a single snapshot
@@ -2023,19 +2051,16 @@ pro get_file_head, unit, filename, filetype, pictsize=pictsize
   common log_data, timeunit
 
   ftype = strlowcase(filetype)
-
-  if ftype eq filetype then lenstr = 79 else lenstr = 500
+  lenstr = 500
 
   ;; Type definitions
-  headline = ''
-  for i=1, lenstr do headline = headline + ' '
+  headline = strjoin(replicate(' ', lenstr))
   it      = 1L
   ndim    = 1L
   neqpar  = 0L
   eqpar   = 0.0
   nw      = 1L
-  varname = ''
-  for i=1, lenstr do varname = varname + ' '
+  varname = headline
 
   ;; Remember pointer position at beginning of header
   point_lun, -unit, pointer0
@@ -2055,8 +2080,57 @@ pro get_file_head, unit, filename, filetype, pictsize=pictsize
         nx = lonarr(1)
         nx[0] = 1
      end
+     'rim': begin
+        line = headline         ; long string
+        time = double(1)        ; simulation time
+        ndim = 2                ; always 2D
+        nx = lonarr(ndim)       ; grid size
+        gencoord = 0            ; always regular grid
+        varname = 'lon lat'     ; convert to lon-lat
+        ;; read header
+        header = 1
+        while header do begin
+           line = ''
+           readf, unit, line
+           if line eq "TITLE" then readf, unit, headline
+           if line eq "NUMERICAL VALUES" then begin
+              readf, unit, nw
+              nw -= 2              ; remove coord names
+              readf, unit, nTheta  ; latitudes per hemisphere
+              nx[1] = 2*nTheta - 1 ; latitudes on two hemispheres
+              readf, unit, nPsi    ; longitudes
+              nx[0] = nPsi
+           endif
+           if line eq "VARIABLE LIST" then begin
+              ;; print, 'reading VARIABLE LIST'
+              name = ''
+              for iw = 1, ndim do readf, unit, name
+              for iw = 1, nw do begin
+                 readf, unit, name
+                 parts = STRSPLIT(name, /EXTRACT)
+                 varname += ' ' + parts[1]
+                 headline += ' ' + parts[2]
+              endfor
+           endif
+           if line eq "SIMULATION" then begin
+              ;; print,'reading SIMULATION'
+              readf, unit, it
+              readf, unit, time
+           endif
+           if line eq "DIPOLE TILT" then begin
+              ;; print,'reading DIPOLE TILT'
+              neqpar = 1
+              eqpar = fltarr(neqpar)
+              name = ''
+              readf, unit, eqpar, name
+              varname += name + ' '
+           endif
+           if line eq "BEGIN NORTHERN HEMISPHERE" then header = 0
+        endwhile
+        ;; help,headline,ndim,nx,nw,it,time,eqpar
+     end
      'ascii': begin
-        time=double(1)
+        time = double(1)
         readf, unit, headline
         readf, unit, it, time, ndim, neqpar, nw
         gencoord = (ndim lt 0)
@@ -2113,7 +2187,18 @@ pro get_file_head, unit, filename, filetype, pictsize=pictsize
      for idim = 1, ndim do nxs = nxs*nx(idim-1)
      ;; Snapshot size = header + data + recordmarks
      case ftype of
-        'log'  : pictsize = 1
+        'log': pictsize = 1
+        'rim': begin
+           ;; read one line and take its length (+1 for the newline)
+           line = ''
+           readf, unit, line
+           ;; the equator is repeated, hence nx[1]+1
+           ;; there is a "BEGIN SOUTHERN HEMISPHERE" line
+           ;; and a line with two spaces above it (+3)
+           pictsize = headlen + (strlen(line)+1)*nx[0]*(nx[1]+1) $
+                      + strlen("BEGIN SOUTHERN HEMISPHERE")+1 + 3
+           help, pictsize
+        end
         'ascii': begin
            ;; read one line and take its length (+1 for the newline)
            line = ''
@@ -2131,6 +2216,8 @@ end
 ;==============================================================================
 pro get_pict, unit, filename, filetype, npict, error
 
+  ; read a snapshot from the file after skipping npict-1 snapshots.
+  
   common debug_param & on_error, onerror
 
   if filetype eq 'IPIC3D' then begin 
@@ -2170,8 +2257,9 @@ pro get_pict, unit, filename, filetype, npict, error
 
      ;; Read data
      case strlowcase(filetype) of
-        'log':   get_pict_log, filename
+        'log'  : get_pict_log, filename
         'ascii': get_pict_asc, unit, npict
+        'rim'  : get_pict_rim, unit, npict
         'real8': get_pict_bin, unit, npict
         'real4': get_pict_real, unit, npict
         else:    begin
@@ -2189,6 +2277,8 @@ end
 ;==============================================================================
 pro get_pict_log, file
 
+  ;; read coordinate (=time) and values from ASCII log/satellite file
+  
   common debug_param & on_error, onerror
 
   common plot_data
@@ -2206,54 +2296,92 @@ end
 ;==============================================================================
 pro get_pict_asc, unit, npict
 
+  ;; Read coordinates and values row by row from ascii SWMF file
+
   common debug_param & on_error, onerror
 
   common plot_data
   common file_head
 
-  ;----------------------------------------
-  ; Read coordinates and values row by row
-  ;----------------------------------------
-  wrow=dblarr(nw)
-  xrow=dblarr(ndim)
+  wrow = dblarr(nw)
+  xrow = dblarr(ndim)
   case ndim of
   ;-------------- 1D ----------------------
   1: begin
-    x=dblarr(nx(0),ndim)
-    w=dblarr(nx(0),nw)
-    for ix=0L,nx(0)-1 do begin
+    x = dblarr(nx(0),ndim)
+    w = dblarr(nx(0),nw)
+    for ix=0L, nx(0)-1 do begin
       readf,unit,xrow,wrow
-      x(ix,0:ndim-1)=xrow(0:ndim-1)
-      w(ix,0:nw-1)  =wrow(0:nw-1)
+      x[ix,*] = xrow
+      w[ix,*] = wrow
     endfor
   end
   ;-------------- 2D ----------------------
   2: begin
-    x=dblarr(nx(0),nx(1),ndim)
-    w=dblarr(nx(0),nx(1),nw)
-    for jx=0L,nx(1)-1 do begin
-      for ix=0L,nx(0)-1 do begin
-        readf,unit,xrow,wrow
-        x(ix,jx,0:ndim-1)=xrow(0:ndim-1)
-        w(ix,jx,0:nw-1)  =wrow(0:nw-1)
+    x = dblarr(nx(0),nx(1),ndim)
+    w = dblarr(nx(0),nx(1),nw)
+    for jx=0L, nx(1)-1 do begin
+      for ix=0L, nx(0)-1 do begin
+        readf, unit, xrow, wrow
+        x[ix,jx,*] = xrow
+        w[ix,jx,*] = wrow
       endfor
     endfor
   end
   ;-------------- 3D ----------------------
   3: begin
-    x=dblarr(nx(0),nx(1),nx(2),ndim)
-    w=dblarr(nx(0),nx(1),nx(2),nw)
-    for kx=0L,nx(2)-1 do begin
-      for jx=0L,nx(1)-1 do begin
-        for ix=0L,nx(0)-1 do begin
-          readf,unit,xrow,wrow
-          x(ix,jx,kx,0:ndim-1)=xrow(0:ndim-1)
-          w(ix,jx,kx,0:nw-1)=wrow(0:nw-1)
+    x = dblarr(nx(0),nx(1),nx(2),ndim)
+    w = dblarr(nx(0),nx(1),nx(2),nw)
+    for kx=0L, nx(2)-1 do begin
+      for jx=0L, nx(1)-1 do begin
+        for ix=0L, nx(0)-1 do begin
+          readf, unit, xrow, wrow
+          x[ix,jx,kx,*] = xrow
+          w[ix,jx,kx,*] = wrow
         endfor
       endfor
     endfor
   end
   endcase
+end
+;==============================================================================
+pro get_pict_rim, unit, npict
+
+  ; Read coordinates and values row by row from a Ridley Ionosphere .idl file
+  
+  common debug_param & on_error, onerror
+
+  common plot_data
+  common file_head
+
+  xrow = dblarr(ndim)           ; coordinates in a row
+  wrow = dblarr(nw)             ; variables
+  x = dblarr(nx[0],nx[1],ndim)  ; complete coordinate array
+  w = dblarr(nx[0],nx[1],nw)    ; complete variable array
+  nLat = (nx[0]-1)/2 + 1        ; number of latitudes per hemisphere
+  ;; read north hemisphere
+  for iLon = 0, nx[1]-1 do begin
+     for iLat = 2*(nLat-1), nLat-1, -1 do begin
+        readf, unit, xrow, wrow
+        x(iLon,iLat,0) = xrow[1]      ; longitude
+        x(iLon,iLat,1) = 90 - xrow[0] ; convert colat to lat
+        w(iLon,iLat,*) = wrow
+     endfor
+  endfor
+  ;; skip southern header
+  line = ''
+  readf, unit, line
+  readf, unit, line
+  ;; read south hemisphere
+  for iLon = 0, nx[1]-1 do begin
+     readf, unit, line ; skip equator (it may not set by IPE)
+     for iLat = nLat-2, 0, -1 do begin
+        readf, unit, xrow, wrow
+        x(iLon,iLat,0) = xrow[1]
+        x(iLon,iLat,1) = 90 - xrow[0]
+        w(iLon,iLat,*) = wrow
+     endfor
+  endfor
 end
 ;==============================================================================
 pro get_pict_bin, unit, npict
@@ -2539,13 +2667,13 @@ pro read_plot_param, quiet=quiet
      if plotdim eq 1 then begin
         if strmid(plotmode,0,4) ne 'plot' then plotmode='default'
         print,'1D plotmode: plot/plot_io/plot_oi/plot_oo'
-        print,'1D +options: max,mean,log,noaxis,over,dot,dash,time,zero,#c999,#ct999'
+        print,'1D +options: dot,dash,extra,max,mean,log,noaxis,over,time,zero,#c999,#ct999'
         askstr,'plotmode(s)                ',plotmode,doask
      endif else begin
         if strmid(plotmode,0,4) eq 'plot' then plotmode='default'
         print,'2D plotmode: shade/surface/cont/tv/polar/lonlatn/lonlats/velovect/vector/stream/scatter'
         print,'2D +options: degree/radian/hour'
-        print,'2D +options: bar,body,fill,grid,irr,label,max,mean,log,lgx,lgy'
+        print,'2D +options: bar,body,extra,fill,grid,irr,label,max,mean,log,lgx,lgy'
         print,'2D +options: map,mesh,noaxis,over,usa,white,#c999,#ct999'
         askstr,'plotmode(s)                ',plotmode,doask
      endelse
@@ -2596,98 +2724,74 @@ pro read_transform_param
   common vector_param
   common plot_data
 
-  ;; help,ndim,transform,gencoord
-  
-  if (gencoord or transform eq 'unpolar') and ndim eq 2 then begin
-      if transform eq '' then begin
-        transform='none'
-        askstr,"transform (r=regular/p=polar/u=unpolar/m=my/n=none)",$
-          transform,1
-      endif else $
-        askstr,"transform (r=regular/p=polar/u=unpolar/m=my/n=none)",$
-        transform,doask
+  ;; Ask transformation if gencoord is true
+  if gencoord then begin
+     if transform eq '' then begin
+        transform = "none"
+        askstr, "transform (p=polar/s=sphere/u=unpolar/m=my/n=none/a=angle)", $
+                transform, 1
+     endif else $
+        askstr,"transform (p=polar/s=sphere/u=unpolar/m=my/n=none/a=angle)", $
+               transform, doask
+  endif
 
-      ; Complete name
-      case transform of
-          'r': transform='regular'
-          'p': transform='polar'
-          'u': transform='unpolar'
-          'm': transform='my'
-          'n': transform='none'
-         else:
-      endcase
-      ; Get transformation parameters and calculate grid
-      case 1 of
-        transform eq 'regular':begin
-           print, 'Generalized coordinates, dimensions for regular grid'
-           if n_elements(nxreg) ne 2 then nxreg = [0,0]
-           if n_elements(xreglimits) ne 4 then xreglimits = dblarr(4) $
-           else xreglimits = double(xreglimits)
-           nxreg0 = nxreg(0)
-           nxreg1 = nxreg(1)
-           asknum, 'nxreg(0) (use negative sign to limit x)', nxreg0, doask
-           if nxreg0 lt 0 then begin
-               nxreg0=abs(nxreg0)
-               xmin=0 & xmax=0
-               asknum,'xreglimits(0) (xmin)', xmin, doask
-               asknum,'xreglimits(2) (xmax)', xmax, doask
-               xreglimits(0) = xmin
-               xreglimits(2) = xmax
-           endif
-           asknum, 'nxreg(1) (use negative sign to limit y)', nxreg1, doask
-           if nxreg1 lt 0 then begin
-               nxreg1=abs(nxreg1)
-               ymin=0 & ymax=0
-               asknum,'xreglimits(1) (ymin)', ymin, doask
-               asknum,'xreglimits(3) (ymax)', ymax, doask
-               xreglimits(1) = ymin
-               xreglimits(3) = ymax
-           endif
-           grid = lindgen(nxreg0,nxreg1)
-           nxreg = [nxreg0,nxreg1]
-           wregpad=0
-        end
-        transform eq 'polar' or transform eq 'unpolar':begin
-            asknum, 'Number of vector variables', nvector, doask
-            getvectors, nvector, vectors
-            grid = lindgen(nx(0),nx(1))
-        end
-        transform eq 'none':grid=lindgen(nx(0),nx(1))
-        else: print, 'Unknown value for transform:', transform
-      endcase
-   endif else if (gencoord or transform eq 'unpolar') and ndim eq 3 then begin
-       if transform eq '' then begin
-           transform="none"
-           askstr, "transform (p=polar/s=sphere/u=unpolar/m=my/n=none)", $
-             transform, 1
-       endif else $
-         askstr,"transform (p=polar/s=sphere/u=unpolar/m=my/n=none)", $
-         transform, doask
-       case transform of
-           'p': transform = 'polar'
-           's': transform = 'sphere'
-           'u': transform = 'unpolar'
-           'm': transform = 'my'
-           'n': transform = 'none'
-           else:
-       endcase
-       case 1 of
-           transform eq 'polar' or transform eq 'unpolar' or $
-             transform eq 'sphere' :begin
-               getvectors, nvector, vectors
-               grid = lindgen(nx(0),nx(1),nx(2))
-           end
-           transform eq 'none': grid = lindgen(nx(0),nx(1),nx(2))
-           else: print,'Unknown value for transform:', transform
-       endcase
-   endif else case ndim of
-       1: grid = lindgen(nx(0))
-       2: grid = lindgen(nx(0),nx(1))
-       3: grid = lindgen(nx(0),nx(1),nx(2))
-   endcase
+  ;; Complete name
+  case transform of
+     'a': transform = 'angle'
+     'r': transform = 'regular'
+     'p': transform = 'polar'
+     'u': transform = 'unpolar'
+     'm': transform = 'my'
+     'n': transform = 'none'
+     else:
+  endcase
 
-   ;; grid helps to create a cut, e.g.: cut=grid(*,4)
-   help, grid
+  ;; default grid (overwritten for "regular" transform)
+  case ndim of
+     1: grid = lindgen(nx(0))
+     2: grid = lindgen(nx(0),nx(1))
+     3: grid = lindgen(nx(0),nx(1),nx(2))
+  endcase
+
+  if transform eq 'polar' or transform eq 'unpolar' or $
+     transform eq 'sphere' then begin
+     asknum, 'Number of vector variables', nvector, doask
+     getvectors, nvector, vectors
+  endif
+     
+  ;; Get transformation parameters and calculate grid
+  if gencoord and ndim eq 2 and transform eq 'regular' then begin
+     print, 'Generalized coordinates, dimensions for regular grid'
+     if n_elements(nxreg) ne 2 then nxreg = [0,0]
+     if n_elements(xreglimits) ne 4 then xreglimits = dblarr(4) $
+     else xreglimits = double(xreglimits)
+     nxreg0 = nxreg(0)
+     nxreg1 = nxreg(1)
+     asknum, 'nxreg(0) (use negative sign to limit x)', nxreg0, doask
+     if nxreg0 lt 0 then begin
+        nxreg0=abs(nxreg0)
+        xmin=0 & xmax=0
+        asknum,'xreglimits(0) (xmin)', xmin, doask
+        asknum,'xreglimits(2) (xmax)', xmax, doask
+        xreglimits(0) = xmin
+        xreglimits(2) = xmax
+     endif
+     asknum, 'nxreg(1) (use negative sign to limit y)', nxreg1, doask
+     if nxreg1 lt 0 then begin
+        nxreg1=abs(nxreg1)
+        ymin=0 & ymax=0
+        asknum,'xreglimits(1) (ymin)', ymin, doask
+        asknum,'xreglimits(3) (ymax)', ymax, doask
+        xreglimits(1) = ymin
+        xreglimits(3) = ymax
+     endif
+     grid = lindgen(nxreg0,nxreg1)
+     nxreg = [nxreg0,nxreg1]
+     wregpad = 0
+  endif
+
+  ;; grid helps to create a cut, e.g.: cut=grid(*,4)
+  help, grid
 end
 ;==============================================================================
 pro getvectors, nvector, vectors
@@ -2747,11 +2851,13 @@ pro do_transform, ifile
   ;; no transformation is done for a single file if dotransform=='n'
   ;; and wreg has elements if usereg is true.
 
-  if dotransform eq 'n' and n_elements(ifile) eq 0 and (not usereg or keyword_set(wreg))$
-  then return
+  if dotransform eq 'n' and n_elements(ifile) eq 0 $
+     and (not usereg or keyword_set(wreg)) then return
 
-  if transform eq 'my' or transform eq 'm' then $
+  if transform eq 'my' then $
      do_my_transform, ifile, variables, x, w, xreg, wreg, usereg $
+  else if transform eq 'angle' then $
+     make_angle_grid $
   else if usereg then case transform of
      'regular': make_regular_grid
      'polar'  : make_polar_grid
@@ -3306,7 +3412,33 @@ pro make_sphere_grid
   variables(0:2)=['r','theta','phi']
 
 end
-  
+
+;==============================================================================
+pro make_angle_grid
+
+; Convert angle variables from degrees to radians so r-angle cuts look good
+
+  common debug_param & on_error, onerror
+
+  common file_head ; ndim, variables
+  common plot_data ; x
+
+  case ndim of
+     2: for idim = 0, 1 do begin
+        if variables(idim) eq 'lon' or variables(idim) eq 'lat' $
+           and max(abs(x(*,*,idim))) gt 7 then x(*,*,idim) *= !dtor
+     endfor
+     3: for idim = 0, 2 do begin
+        if variables(idim) eq 'lon' or variables(idim) eq 'lat' $
+           and max(abs(x(*,*,*,idim))) gt 7 then x(*,*,*,idim) *= !dtor
+     endfor
+     else: begin
+        print,'unpolargid works for 2D and 3D arrays only'
+        retall
+     end
+  endcase
+end
+
 ;==============================================================================
 pro make_unpolar_grid
 
@@ -3943,6 +4075,13 @@ pro plot_func
         !p.color = color
      endif
 
+     ;; check if there are some extra things to add
+     i = strpos(plotmod, 'extra')
+     if i ge 0 then begin
+        plotmod = strmid(plotmod,0,i)+strmid(plotmod,i+5)
+        showextra = 1
+     endif else showextra = 0
+
      title = plottitles(ifunc)
      if title eq 'default' then title = funcs(ifunc)
      title = "!5"+title
@@ -4072,7 +4211,8 @@ pro plot_func
         ;; Omit X axis if unneeded
         if filetype eq 'log' and timeunit eq 'date' then $
            !x.tickformat = ['LABEL_DATE']
-        if plotiy gt (multiy - nplot) > 0 and not showxtitle then begin
+        
+        if plotiy gt 0 and not showxtitle then begin
            if not showxaxis then begin
               !x.tickname = strarr(60) + ' '
               !x.tickformat = strarr(10)
@@ -4172,7 +4312,7 @@ pro plot_func
 
      ;; figure out the units of angle in 2nd coordinate if not already set
      if plotmod eq 'polar' and angleunit lt 0 then begin
-        if max(yy)-min(yy) gt 300 then $
+        if max(yy)-min(yy) gt 30 then $
            angleunit = !dtor $  ; degrees
         else if max(yy)-min(yy) gt 20 then $
            angleunit = !pi/12 $ ; local time
@@ -4229,7 +4369,8 @@ pro plot_func
            end
            'surface'  :surface,f>f_min,ZRANGE=[f_min,f_max],$
                                XSTYLE=noaxis+1,YSTYLE=noaxis+1,$
-                               ZSTYLE=noaxis+18,AX=viewanglex,AZ=viewanglez,/NOERASE
+                               ZSTYLE=noaxis+18,AX=viewanglex,AZ=viewanglez, $
+                               /NOERASE
            'tv'       :begin
               tv,tvf,tvplotx,tvploty,XSIZE=tvsizex,YSIZE=tvsizey
               contour,f,XSTYLE=noaxis+1,YSTYLE=noaxis+1,$
@@ -4371,28 +4512,22 @@ pro plot_func
      endif
 
      if showmap or showusa then begin
+        if white then color=255 else color=!p.color
+        limit = [yrange(0), xrange(0), yrange(1), xrange(1)]
         if plotmod eq 'lonlatn' then begin
-           if !y.range(0) lt !y.range(1) then $
-              map_set, 90, -90-lonshift, latdel=10, /azimuthal, /continent, $
-                       usa=showusa,con_color=0, /noborder, /noerase, $
-                       limit=[90+yrange(0),0,90,360] $
-           else $
-              map_set, 90, -90-lonshift, latdel=10, /azimuthal, /continent, $
-                       usa=showusa,con_color=0, /noborder, /noerase, $
-                       limit=[yrange(0),xrange(0),yrange(1),xrange(1)]
+           if !y.range(0) lt !y.range(1) then limit=[90+yrange(0), 0, 90, 360]
+           map_set, 90, -90-lonshift, latdel=10, /azimuthal, /continent, $
+                    usa=showusa, con_color=color, color=color, $
+                    /noborder, /noerase, limit=limit
         end else if plotmod eq 'lonlats' then begin
-           if !y.range(0) lt !y.range(1) then $
-              map_set, -90, -90+lonshift, latdel=10, /azimuthal, /continent, $
-                       usa=showusa,con_color=0, /noborder, /noerase, $
-                       limit=[-90,0,-90+yrange(1),360] $
-           else $
-              map_set, -90, -90+lonshift, latdel=10, /azimuthal, /continent, $
-                       usa=showusa,con_color=0, /noborder, /noerase, $
-                       limit=[yrange(0),xrange(0),yrange(1),xrange(1)]
+           if !y.range(0) lt !y.range(1) then limit=[-90, 0,-90+yrange(1),360]
+           map_set, -90, -90+lonshift, latdel=10, /azimuthal, /continent, $
+                    con_color=color, color=color, $
+                    /noborder, /noerase, limit=limit
         end else $
            map_set, 0.0, 180, $
                     /cylindrical, /continent, usa=showusa, /noborder, $
-                    /noerase, limit=[yrange(0),xrange(0),yrange(1),xrange(1)]
+                    /noerase, limit=limit
      endif
 
      !p.title = ''
@@ -4416,6 +4551,9 @@ pro plot_func
         if white then tvlct, r_curr, g_curr, b_curr
 
      endif
+
+     ;; call user defined procedure
+     if showextra then show_extra, ifunc
 
      !p.multi(0) = multi0
      !p.position = 0
@@ -5928,7 +6066,7 @@ pro get_log, file, wlog, wlognames, logtime, timeunit, rownames, $
         wlognames = strarr(nwlog+5)
         wlognames = ['year', 'mo', 'dy', 'hr', 'mn', 'sc', wlognamesRead(1:*)]
 
-        print,wlognames
+        if verbose then print, wlognames
         
         for i = 0, nt-1 do begin
            wlog(i,0) = fix(strmid(value.(0)[i],0, 4))
@@ -5949,7 +6087,7 @@ pro get_log, file, wlog, wlognames, logtime, timeunit, rownames, $
      if i gt 0 then wlognames[i] = 'B_NorthGeomag'
      i = where(wlognames eq 'dbe_nez')
      if i gt 0 then wlognames[i] = 'B_EastGeomag'
-     i = where(wlognames eq 'bz_nez')
+     i = where(wlognames eq 'dbz_nez')
      if i gt 0 then wlognames[i] = 'B_DownGeomag'
 
      if verbose then print,'wlognames=', wlognames
@@ -6204,7 +6342,7 @@ pro plot_log
 
 ; If none of colors, linestyles or symbols are defined, make colors different
   if max(linestyles) eq 0 and max(symbols) eq 0 and min(colors) eq 255 then $
-     colors = [255,100,250,150,200,50,25,220,125]
+     colors = [255,100,250,150,200,50,25,220,125,75]
 
 ; Define default title
   if n_elements(title) eq 1 and size(title,/type) eq 7 then title0=title $
@@ -6239,8 +6377,8 @@ pro plot_log
 
   if not keyword_set(noerase) then erase
 
-; The first iteration is used to get the X and Y ranges from the
-; data. This can be skipped if both ranges are given explicitly.
+  ;; The first iteration is used to get the X and Y ranges from the
+  ;; data. This can be skipped if both ranges are given explicitly.
   if DoXrange or DoYrange then iter0 = 1 else iter0 = 2
 
   for iter = iter0, 2 do begin
@@ -6333,30 +6471,37 @@ pro plot_log
                  xtitle1 = ''
                  xtickname1 = strarr(60) + ' '
                  xtickformat1 = strarr(10)
-                 xstyle=5
-                 ystyle=5
                  if ilog eq 0 then begin
-                    xstyle=1
-                    ystyle=1
-                    if ifunc eq 0       then title1  = title0
+                    if ifunc eq 0 then title1  = title0
                     if ifunc eq nlogfunc-1 then begin
                        xtitle1    = xtitle0
                        xtickname1 = !x.tickname
                        if timeunit eq 'date' then xtickformat1 = ['LABEL_DATE']
                     endif
+                    ;; plot the axes and titles with default color
+                    plot, xcoord, field, pos = posm, $
+                          xrange = xrange, $
+                          yrange = yranges(*,ifunc), $
+                          xlog = dofft, $
+                          ylog = dofft, $
+                          xstyle = 1, $
+                          ystyle = 1, $
+                          title  = title1, $
+                          xtitle = xtitle1, $
+                          xtickname = xtickname1, $
+                          xtickformat = xtickformat1, $
+                          ytitle = ytitles0(ifunc), $
+                          thick = thick, $
+                          /noerase, /nodata
                  endif
+                 ;; plot the lines/symbols
                  plot, xcoord, field, pos = posm, $
                        xrange = xrange, $
                        yrange = yranges(*,ifunc), $
                        xlog = dofft, $
                        ylog = dofft, $
-                       xstyle = xstyle, $
-                       ystyle = ystyle, $
-                       title  = title1, $
-                       xtitle = xtitle1, $
-                       xtickname = xtickname1, $
-                       xtickformat = xtickformat1, $
-                       ytitle = ytitles0(ifunc), $
+                       xstyle = 5, $
+                       ystyle = 5, $
                        color = colors(ilog), $
                        psym  = symbols(ilog), $
                        linestyle = linestyles(ilog), $
@@ -6373,13 +6518,13 @@ pro plot_log
            ;; get vertical position of legend
            ypos=legendpos(3) - (ilog+0.5)/nlog*(legendpos(3)-legendpos(2))
            ;; draw a line (or point) with the appropriate color/linetype/symbol
-           plot,legendpos(0:1),[ypos,ypos],    $
-                color     = colors(ilog),         $
-                psym      = symbols(ilog),        $
-                linestyle = linestyles(ilog),     $
+           plot, legendpos(0:1), [ypos,ypos],     $
+                color     = colors[ilog],         $
+                psym      = symbols[ilog],        $
+                linestyle = linestyles[ilog],     $
                 thick     = thick,                $
                 /normal, xrange=[0,1], yrange=[0,1], $
-                /noerase, xstyle=-1, ystyle=-1
+                /noerase, xstyle=-1, ystyle=-1, xtickv=fltarr(60)
            
                                 ; print out legend or logfile name
            if n_elements(legends) eq nlog and $
@@ -6399,35 +6544,61 @@ pro plot_log
 
 end
 ;==============================================================================
-pro rms_logfiles, logfilename, varname, tmin=tmin, tmax=tmax, verbose=verbose
+pro rms_logfiles, logfilename, varname, tmin=tmin, tmax=tmax, $
+                  smooth0=smooth0, smooth1=smooth1, nsmooth=nsmooth, $
+                  verbose=verbose, rms=rms, mae=mae
 
-; Print the rms deviation between two logfiles for variables in varname.
-; If varname is not present, show rms for all variables.
+  ;; Print the rms deviation between two logfiles for variables in varname.
+  ;; If varname is not present, show rms for all variables.
+  ;; Return results in rms and mae (scalars or arrays) if present
 
   common debug_param & on_error, onerror
 
   interpol_logfiles, logfilename, var0, var1, varname, time, $
-                     tmin=tmin, tmax=tmax, verbose=verbose
+                     tmin=tmin, tmax=tmax, smooth0=smooth0, smooth1=smooth1, $
+                     verbose=verbose
+
   string_to_array, varname, varnames, nvar
   ntime = n_elements(time)
 
-  print,'var rms(A-B) rsm(A) rms(B)'
-  for ivar=0,nvar-1 do $
-     print, varnames(ivar), $
-            sqrt(total((var0(*,ivar) - var1(*,ivar))^2)/ntime), $
-            sqrt(total(var0(*,ivar)^2)/ntime), $
-            sqrt(total(var1(*,ivar)^2)/ntime)
+  ;; Apply smoothing after the interpolation if required
+  if keyword_set(nsmooth) then begin
+     for ivar = 0, nvar-1 do begin
+        var0[*,ivar] = smooth(var0[*,ivar], nsmooth)
+        var1[*,ivar] = smooth(var1[*,ivar], nsmooth)
+     endfor
+  end
 
-  print,'var |A-B| |A| |B|'
-  for ivar=0,nvar-1 do $
-     print,varnames(ivar), total(abs(var0(*,ivar) - var1(*,ivar)))/ntime, $
-           total(abs(var0(*,ivar)))/ntime, total(abs(var1(*,ivar)))/ntime
+  show = not(keyword_set(rms) or keyword_set(mae))
+  rmsvar = fltarr(nvar)
+  maevar = fltarr(nvar)
+  for ivar = 0, nvar-1 do begin
+     rmsvar[ivar] = sqrt(total((var0(*,ivar) - var1(*,ivar))^2)/ntime)
+     maevar[ivar] = total(abs(var0(*,ivar) - var1(*,ivar)))/ntime
+  endfor
+  if arg_present(rms) then begin
+     if nvar eq 1 then rms = rmsvar[0] else rms = rmsvar
+  endif
+  if arg_present(mae) then begin
+     if nvar eq 1 then mae = maevar[0] else mae = maevar
+  endif
+  if verbose or (n_elements(rms) eq 0 and n_elements(mae) eq 0) then begin
+     print,'var rms(A-B) rsm(A) rms(B)'
+     for ivar = 0, nvar-1 do $
+        print, varnames(ivar), rmsvar[ivar], $
+               sqrt(total(var0(*,ivar)^2)/ntime), $
+               sqrt(total(var1(*,ivar)^2)/ntime)
 
+     print,'var |A-B| |A| |B|'
+     for ivar = 0, nvar-1 do $
+        print, varnames(ivar), maevar[ivar], $
+               total(abs(var0(*,ivar)))/ntime, total(abs(var1(*,ivar)))/ntime
+  end
 end
 ;==============================================================================
 pro interpol_logfiles, logfilename, var0, var1, varname, time, $
-                       tmin=tmin, tmax=tmax, verbose=verbose
-
+                       tmin=tmin, tmax=tmax, smooth0=smooth0, smooth1=smooth1,$
+                       verbose=verbose
 ; Interpolate variables between two logfiles for variables in varname.
 ; If varname is not present, interpolate all variables.
 
@@ -6437,17 +6608,18 @@ pro interpol_logfiles, logfilename, var0, var1, varname, time, $
 
   get_log, logfilenames(0), wlog0, varnames0, verbose=verbose
   get_log, logfilenames(1), wlog1, varnames1, verbose=verbose
-  if not keyword_set(varname) then varname = varnames0
+  if not keyword_set(varname) then varname = strjoin(varnames0,' ')
   interpol_log, wlog0, wlog1, var0, var1, varname, varnames0, varnames1,$
-               time, tmin=tmin, tmax=tmax
+               time, tmin=tmin, tmax=tmax, smooth0=smooth0, smooth1=smooth1
 
 end
 ;==============================================================================
 pro interpol_log, wlog0, wlog1, var0, var1, varname, varnames0, varnames1, $
-                  time, tmin=tmin, tmax=tmax, timeunit=timeunit
+                  time, tmin=tmin, tmax=tmax, timeunit=timeunit, $
+                  smooth0=smooth0, smooth1=smooth1
 
 ; Interpolate the variables listed in varname to the time of wlog0
-; between tmin and tmax. 
+; between tmin and tmax. Apply optional smoothing.
 
   common debug_param & on_error, onerror
 
@@ -6508,8 +6680,11 @@ pro interpol_log, wlog0, wlog1, var0, var1, varname, varnames0, varnames1, $
 
      if not error0 and not error1 then begin
 
+        if keyword_set(smooth0) then field0 = smooth(field0, smooth0)
+        if keyword_set(smooth1) then field1 = smooth(field1, smooth1)
+
         var0(*,ivar) = field0(index0)
-        var1(*,ivar) = interpol(field1,time1,time)
+        var1(*,ivar) = interpol(field1, time1, time)
 
      endif
   endfor
@@ -6715,59 +6890,105 @@ pro set_position, sizes, xipos, yipos, pos, rect = rect, $
 
 end
 ;==============================================================================
-pro plot_color_bar, pos, maxmin
+pro plot_color_bar, position, a, format=format, title=title
 
 ; plot color bar based on the current color table
+; pos is a four element position array: x0, y0, x1, y1
+; if |x1-x0| > |y1-y0| a horizontal colorbar is drawn
+; otherwise vertical.
+; For horizontal: if y1 > y0 the labels are at the top otherwise bottom
+; For vertical: if x1 > x0 the labels are on the right otherwise left
+; "a" is an array of at least 2 elements determining the range
+; format is optional argument to control the axis label format
+; for example to show percents, use format='(i3,"%")'
+; title can be set to a string to show a title at the top/bottom
 
   common debug_param & on_error, onerror
 
-  xrange=!x.range & yrange=!y.range & !x.range=0 & !y.range=0
+  ;; Store settings
+  x_range = !x.range & y_range = !y.range
+  p_title=!p.title & x_title = !x.title & y_title = !y.title
+  ;; Set defailts
+  !x.range = 0 & !y.range = 0 & !p.title = '' & !x.title = '' & !y.title = ''
+  
+  x0 = position(0) & y0 = position(1) & x1 = position(2) & y1 = position(3)
+  pos = [ x0<x1, y0<y1, x1>x0, y1>y0]
+  
+  horizontal = abs(x1 - x0) gt abs(y1 - y0)
+  xaxis = y1 gt y0
+  yaxis = x1 gt x0
 
-  maxi = max(maxmin)
-  mini = min(maxmin)
+  xtitle = '' &  ptitle = ''
+  if n_elements(title) ne 0 then begin
+     ;; put title into xtitle or ptitle
+     if horizontal and xaxis then xtitle = title else ptitle = title
+  endif
+
+  maxa = max(a)
+  mina = min(a)
+  values = findgen(256)/255*(maxa-mina) + mina
 
   array = findgen(10,256)
-  for i=0,9 do array(i,*) = findgen(256)/(256-1)*(maxi-mini) + mini
-
-  levels=(findgen(60)-1)/(58-1)*(maxi-mini)+mini
+  for i = 0, 9 do array(i,*) = values
+  if horizontal then array = transpose(array)
+  
+  levels = (findgen(60)-1)/57*(maxa-mina) + mina
 
 ;; The !5 in the title makes sure that the fonts produced later
 ;; will look the same every time when saved into eps/ps file.
 
-  contour, array, /noerase, /cell_fill, xstyle = 5, ystyle = 5, $
-           levels = levels, pos=pos, title='!5 '
+  contour, array, /noerase, /cell_fill, xstyle=5, ystyle=5, $
+           levels=levels, pos=pos, title='!5 '+ptitle
+  ;; show the title at the bottom if the axis labels are on the top
+  if xtitle ne '' then xyouts, 0.5, 0.05, xtitle, /NORMAL, ALIGNMENT=0.5
 
-  plot, maxmin, /noerase, pos = pos, xstyle=1, ystyle=1, /nodata,$
-        xtickname = [' ',' '], xticks = 1, xminor=1  , $
-        ytickname = strarr(60) + ' ', yticklen = 0.25, $
-        title=' ', xtitle=' ',ytitle=' '
-  axis, 1, ystyle=1, /nodata, yax=1, charsize=0.9*(!p.charsize > 1.), $
-        ytitle=' ', ytickname = strarr(60)
-
-  !x.range=xrange & !y.range=yrange
+  if horizontal then begin
+     plot, [mina,maxa], [0,1], /noerase, pos=pos, xstyle=1, ystyle=1, /nodata,$
+           ytickname = [' ',' '], yticks = 1, yminor=1, $
+           xtickname = strarr(60) + ' ', xticklen = 0.25
+     axis, 0, xaxis, xaxis=xaxis, xstyle=1, charsize=0.9*(!p.charsize > 1.), $
+           xtickname=strarr(60), xtickformat=format
+  endif else begin
+     ;; put the labels to the right
+     plot, [0,1], [mina,maxa], /noerase, pos=pos, xstyle=1, ystyle=1, /nodata,$
+           xtickname = [' ',' '], xticks = 1, xminor=1, $
+           ytickname = strarr(60) + ' ', yticklen = 0.25
+     axis, yaxis, yaxis=yaxis, ystyle=1, /nodata, $
+           charsize=0.9*(!p.charsize > 1.), $
+           ytickname=strarr(60), ytickformat=format
+  endelse
+  ;; restore values
+  !x.range=x_range & !y.range=y_range
+  !p.title=p_title & !x.title=x_title & !y.title=y_title
 
 end
 ;==============================================================================
-pro loadct_bw, color, reverse=reverse
+pro loadct_bw, color, reverse=reverse, b=b, w=w, nb=nb, nw=nw
 
-  ;; load color table and set the first and last elements to black-and-white
-  ;; reverse the order if reverse is set
+  ;; Load color table and set the first (nb) and last (nw) elements
+  ;; to black-and-white or the RGB colors passed by the optional b and w
+  ;; 3-element arrays.
+  ;; Reverse the order if reverse is set.
 
   common colors
 
-  if not keyword_set(reverse) then reverse=0
+  if not keyword_set(nb) then nb = 1
+  if not keyword_set(nw) then nw = 1
+
   loadct, color
-  if reverse then begin
+  if keyword_set(reverse) then begin
      r_orig = reverse(r_orig)
      g_orig = reverse(g_orig)
      b_orig = reverse(b_orig)
   endif
-  r_orig(0) = 0
-  g_orig(0) = 0
-  b_orig(0) = 0
-  r_orig(255) = 255
-  g_orig(255) = 255
-  b_orig(255) = 255
+  if n_elements(b) ne 3 then b = [0,0,0]
+  r_orig(0:nb-1) = b[0]
+  g_orig(0:nb-1) = b[1]
+  b_orig(0:nb-1) = b[2]
+  if n_elements(w) ne 3 then w = [255,255,255]
+  r_orig(-nw:*) = w[0]
+  g_orig(-nw:*) = w[1]
+  b_orig(-nw:*) = w[2]
   r_curr = r_orig
   g_curr = g_orig
   b_curr = b_orig
@@ -6791,11 +7012,13 @@ pro makect, color
 
   if not keyword_set(color) then begin
 
-     print,'red   - white to red'
-     print,'blue  - white to blue'
-     print,'rwb   - red white blue'
-     print,'bwr   - blue white red'
-     print,'mid   - blue green white yellow red'
+     print,'red    - white to red'
+     print,'blue   - white to blue'
+     print,'rwb    - red white blue'
+     print,'bwr    - blue white red'
+     print,'mid    - blue green white yellow red'
+     print,'yellow - black to yellow'
+     print,'gold   - black to gold'
 
      color = ''
      read,'Enter color table from list above : ', color
@@ -6807,71 +7030,82 @@ pro makect, color
   ;; Set read, green, blue to values normalized to the 0.0 -- 1.0 range.
 
   case color of
+     'gold' : begin
+        r[*] = (findgen(n)/(n-1))^0.95
+        g[*] = 185./255.*r
+        b[*] =  10./255.*r
+     end
+
+     'yellow' : begin
+        r[*] = findgen(n)/(n-1)
+        g[*] = findgen(n)/(n-1)
+        b[n/2:n-1] = findgen(n/2)/(n/2-1)
+     end
+
      'red' : begin
-        r(*) = 1.
-        g(*) = 1. - findgen(n)/(n-1)
-        b(*) = 1. - findgen(n)/(n-1)
+        r[*] = 1.
+        g[*] = 1. - findgen(n)/(n-1)
+        b[*] = 1. - findgen(n)/(n-1)
      end
 
      'blue' : begin
-        r(*) = 1. - findgen(n)/(n-1)
-        b(*) = 1.
-        g(*) = 1. - findgen(n)/(n-1)
+        r[*] = 1. - findgen(n)/(n-1)
+        b[*] = 1.
+        g[*] = 1. - findgen(n)/(n-1)
      end
 
      'rwb' : begin
         half=n/2
-        r(0:half-1) = 1.
-        g(0:half-1) = findgen(half)/(half-1)
-        b(0:half-1) = findgen(half)/(half-1)
+        r[0:half-1] = 1.
+        g[0:half-1] = findgen(half)/(half-1)
+        b[0:half-1] = findgen(half)/(half-1)
 
-        r(half:n-1) = 1. - findgen(n-half)/(n-half-1)
-        g(half:n-1) = 1. - findgen(n-half)/(n-half-1)
-        b(half:n-1) = 1.
+        r[half:n-1] = 1. - findgen(n-half)/(n-half-1)
+        g[half:n-1] = 1. - findgen(n-half)/(n-half-1)
+        b[half:n-1] = 1.
      end
 
      'bwr' : begin
         half=n/2
-        b(0:half-1) = 1.
-        g(0:half-1) = findgen(half)/(half-1)
-        r(0:half-1) = findgen(half)/(half-1)
-        
-        b(half:n-1) = 1. - findgen(n-half)/(n-half-1)
-        g(half:n-1) = 1. - findgen(n-half)/(n-half-1)
-        r(half:n-1) = 1.
+        b[0:half-1] = 1.
+        g[0:half-1] = findgen(half)/(half-1)
+        r[0:half-1] = findgen(half)/(half-1)
+
+        b[half:n-1] = 1. - findgen(n-half)/(n-half-1)
+        g[half:n-1] = 1. - findgen(n-half)/(n-half-1)
+        r[half:n-1] = 1.
      end
 
      'mid' : begin
-        r(0:n/3-1)     = 0.0
-        r(n/3:n/2-1)   = findgen(n/2-n/3)/(n/2-n/3-1)
-        r(n/2:n-1)     = 1.0
-        
-        b(0:n/2-1)      = 1.
-        b(n/2:2*n/3-1)  = 1. - findgen(2*n/3-n/2)/(2*n/3-n/2-1)
-        b(2*n/3-1:n-1)  = 0.
-        
-        g(0:n/3-1)      = findgen(n/3)/(n/3-1)
-        g(n/3:2*n/3-1)  = 1.
-        g(2*n/3:n-1)    = 1. - findgen(n-2*n/3)/(n-2*n/3-1)
-        
+        r[0:n/3-1]     = 0.0
+        r[n/3:n/2-1]   = findgen(n/2-n/3)/(n/2-n/3-1)
+        r[n/2:n-1]     = 1.0
+
+        b[0:n/2-1]      = 1.
+        b[n/2:2*n/3-1]  = 1. - findgen(2*n/3-n/2)/(2*n/3-n/2-1)
+        b[2*n/3-1:n-1]  = 0.
+
+        g[0:n/3-1]      = findgen(n/3)/(n/3-1)
+        g[n/3:2*n/3-1]  = 1.
+        g[2*n/3:n-1]    = 1. - findgen(n-2*n/3)/(n-2*n/3-1)
      end
 
      else : begin
         print, "Unknown value for color=",color
-        r(*) = findgen(n)
-        g(*) = findgen(n)
-        b(*) = findgen(n)
+        r[*] = findgen(n)/(n-1)
+        g[*] = findgen(n)/(n-1)
+        b[*] = findgen(n)/(n-1)
      end
 
   endcase
 
-  r(0) = 0.0
-  g(0) = 0.0
-  b(0) = 0.0
+  r[0] = 0.0
+  g[0] = 0.0
+  b[0] = 0.0
 
-  r(n-1) = 1.0
-  g(n-1) = 1.0
-  b(n-1) = 1.0
+  r[n-1] = 1.0
+  g[n-1] = 1.0
+  b[n-1] = 1.0
 
   r=255*r
   g=255*g
@@ -7095,3 +7329,22 @@ pro scatter_plot, xx, yy, f, f_min=f_min, f_max=f_max, $
        xrange=xrange, yrange=yrange, /noerase
 end
 ;==============================================================================
+pro plot_map, f, limit, lon=lon, lat=lat, levels=levels
+
+  common plot_param ; blackbackgroun, noerase
+
+  if n_elements(limit) eq 0 then limit=[20, 225, 90, 295]
+  if not keyword_set(noearase) then erase
+  if keyword_set(blackbackground) then black_background
+  if n_elements(lon) eq 0 then lon = findgen(361)
+  if n_elements(lat) eq 0 then lat = findgen(181)-90
+  if n_elements(levels) eq 0 then levels = findgen(203)/2
+
+  map_set, 0.5*(limit(0)+limit(2)), 0.5*(limit(1)+limit(3)), /stereo, $
+           /horizon, /isotropic, limit=limit, color=0, /noerase
+  contour, f, lon, lat, /cell_fill, levels=levels, /overplot
+;  contour, f, lon, lat, /fill, levels=levels, /overplot
+  map_continents, /countries, /continents, /usa, color=255
+  map_grid, londel=10, latdel=10, color=255
+
+end
